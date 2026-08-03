@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+
+<title>📍おでログ Ver.1.1</title>
+
+
+<style>
+
+
+body{
+    font-family:sans-serif;
+    background:#f5f5f5;
+    margin:0;
+    padding:20px;
+}
+
+
+
+h1{
+    text-align:center;
+    font-size:36px;
+}
+
+
+
+
+button{
+
+    width:100%;
+
+    font-size:24px;
+
+    padding:18px;
+
+    margin:10px 0;
+
+    border:none;
+
+    border-radius:15px;
+
+    box-shadow:0 3px 10px rgba(0,0,0,0.2);
+
+}
+
+
+
+
+
+#recordBtn{
+
+    background:#4CAF50;
+
+    color:white;
+
+}
+
+
+
+
+
+#locationBtn{
+
+    background:#2196F3;
+
+    color:white;
+
+}
+
+
+
+
+
+#refreshBtn{
+
+    background:#FF9800;
+
+    color:white;
+
+}
+
+
+
+
+
+#csvBtn{
+
+    background:#9C27B0;
+
+    color:white;
+
+}
+
+
+
+
+
+#status{
+
+    text-align:center;
+
+    font-size:22px;
+
+    color:green;
+
+    margin:15px;
+
+}
+
+
+
+
+
+#currentLocation,
+#history{
+
+    background:white;
+
+    padding:15px;
+
+    border-radius:15px;
+
+    margin-top:20px;
+
+}
+
+
+
+
+
+.record{
+
+    border-bottom:1px solid #ddd;
+
+    padding:12px 0;
+
+}
+
+
+
+
+
+.pageButtons{
+
+    display:flex;
+
+    gap:10px;
+
+}
+
+
+
+.pageButtons button{
+
+    font-size:20px;
+
+}
+
+
+
+</style>
+
+
+</head>
+
+
+
+<body>
+
+
+
+<h1>📍おでログ</h1>
+
+
+
+<button id="recordBtn">
+
+📍 現在地を記録
+
+</button>
+
+
+
+<button id="locationBtn">
+
+🏠 現在地を見る
+
+</button>
+
+
+
+<button id="refreshBtn">
+
+🔄 更新
+
+</button>
+
+
+
+<div id="status">
+
+待機中
+
+</div>
+
+
+
+<div id="currentLocation">
+
+
+<h2>現在地</h2>
+
+
+<p id="place">
+
+場所：未取得
+
+</p>
+
+
+<p id="nowTime">
+
+時間：未取得
+
+</p>
+
+
+</div>
+
+<div id="history">
+
+<h2>📋 記録</h2>
+
+
+<div id="list">
+
+まだ記録はありません
+
+</div>
+
+
+</div>
+
+
+
+
+<div class="pageButtons">
+
+
+<button id="prevBtn">
+
+◀ 前へ
+
+</button>
+
+
+
+<button id="nextBtn">
+
+次へ ▶
+
+</button>
+
+
+</div>
+
+
+
+
+<button id="csvBtn">
+
+💾 CSV保存
+
+</button>
+
+<script>
+
+let records =
+JSON.parse(localStorage.getItem("odeLogRecords")) || [];
+
+let page = 0;
+const perPage = 5;
+
+
+const status = document.getElementById("status");
+const list = document.getElementById("list");
+
+const placeText = document.getElementById("place");
+const timeText = document.getElementById("nowTime");
+
+
+
+// GPSから地名を取得
+async function getPlaceName(lat, lon){
+
+    try{
+
+        let url =
+        "https://nominatim.openstreetmap.org/reverse?format=json&lat="
+        + lat
+        + "&lon="
+        + lon
+        + "&accept-language=ja";
+
+
+        let res = await fetch(url);
+
+        let data = await res.json();
+
+
+        let address = data.address;
+
+
+        return (
+            address.city ||
+            address.town ||
+            address.village ||
+            address.municipality ||
+            "場所不明"
+        );
+
+
+    }catch(e){
+
+        return "地名取得失敗";
+
+    }
+
+}
+
+
+
+
+// 現在地取得・保存
+
+function saveLocation(){
+
+    status.innerHTML =
+    "📡現在地取得中...";
+
+
+    navigator.geolocation.getCurrentPosition(
+
+    async function(position){
+
+
+        let lat =
+        position.coords.latitude;
+
+
+        let lon =
+        position.coords.longitude;
+
+
+
+        let place =
+        await getPlaceName(lat,lon);
+
+
+
+        let now =
+        new Date();
+
+
+
+        let data = {
+
+            place: place,
+
+            time:
+            now.toLocaleString("ja-JP"),
+
+            latitude: lat,
+
+            longitude: lon
+
+        };
+
+
+
+        records.unshift(data);
+
+
+
+        localStorage.setItem(
+            "odeLogRecords",
+            JSON.stringify(records)
+        );
+
+
+
+        placeText.innerHTML =
+        "場所：" + place;
+
+
+        timeText.innerHTML =
+        "時間：" + data.time;
+
+
+
+        status.innerHTML =
+        "✅保存しました";
+
+
+
+        page=0;
+
+        showRecords();
+
+
+    },
+
+
+    function(){
+
+        status.innerHTML =
+        "❌位置情報取得失敗";
+
+    });
+
+
+}
+
+
+
+
+
+// 現在地を記録
+
+document.getElementById("recordBtn")
+.onclick=function(){
+
+    saveLocation();
+
+};
+
+
+
+
+// 現在地を見る
+
+document.getElementById("locationBtn")
+.onclick=function(){
+
+    saveLocation();
+
+};
+
+
+
+
+// 履歴表示
+
+function showRecords(){
+
+    list.innerHTML="";
+
+
+    let start =
+    page * perPage;
+
+
+    let show =
+    records.slice(start,start+perPage);
+
+
+
+    show.forEach(function(r){
+
+
+        let div =
+        document.createElement("div");
+
+
+        div.className="record";
+
+
+        div.innerHTML =
+
+        "📍 "
+        + r.place
+        + "<br>🕒 "
+        + r.time;
+
+
+        list.appendChild(div);
+
+
+    });
+
+}
+
+
+
+
+// 更新
+
+document.getElementById("refreshBtn")
+.onclick=function(){
+
+    records =
+    JSON.parse(localStorage.getItem("odeLogRecords"))
+    || [];
+
+
+    page=0;
+
+    showRecords();
+
+};
+
+
+
+
+// 前へ
+
+document.getElementById("prevBtn")
+.onclick=function(){
+
+    if(page>0){
+
+        page--;
+
+        showRecords();
+
+    }
+
+};
+
+
+
+
+// 次へ
+
+document.getElementById("nextBtn")
+.onclick=function(){
+
+    if((page+1)*perPage < records.length){
+
+        page++;
+
+        showRecords();
+
+    }
+
+};
+
+
+
+// 起動時表示
+
+showRecords();
+
+
+</script>
+
+
+
+
+
+
+</body>
+
+</html>
