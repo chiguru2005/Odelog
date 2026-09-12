@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📍おでログ Ver.3.0</title>
+<title>📍おでログ Ver.4.0</title>
 <style>
 body{font-family:sans-serif;background:#f5f5f5;margin:0;padding:20px}
 h1{text-align:center;font-size:36px}
@@ -12,6 +12,7 @@ button{width:100%;font-size:22px;padding:16px;margin:8px 0;border:none;border-ra
 #locationBtn{background:#2196F3;color:white}
 #autoBtn{background:#9C27B0;color:white}
 #refreshBtn{background:#FF9800;color:white}
+#voiceBtn{background:#795548;color:white}
 #txtBtn{background:#607D8B;color:white}
 #status{text-align:center;font-size:20px;color:green;margin:15px}
 #currentLocation,#history,#autoInfo{background:white;padding:15px;border-radius:15px;margin-top:20px}
@@ -25,11 +26,12 @@ button{width:100%;font-size:22px;padding:16px;margin:8px 0;border:none;border-ra
 </head>
 <body>
 
-<h1>📍おでログ Ver.3.0</h1>
+<h1>📍おでログ Ver.4.0</h1>
 
 <button id="recordBtn">📍 現在地を記録</button>
 <button id="locationBtn">🏠 現在地を見る（保存しない）</button>
 <button id="autoBtn">🤖 自動記録：OFF</button>
+<button id="voiceBtn">🔊 音声：OFF</button>
 <button id="refreshBtn">🔄 更新</button>
 
 <div id="status">待機中</div>
@@ -59,6 +61,8 @@ button{width:100%;font-size:22px;padding:16px;margin:8px 0;border:none;border-ra
 </div>
 
 <button id="txtBtn">💾 今日の記録をTXT保存</button>
+<button id="allTxtBtn">📅 日付ごとのTXTを作成</button>
+<div id="fileInfo" class="note">※iPhoneの仕様上、Webアプリから「ファイル」へ完全自動保存はできません。ボタンでTXTを作成して「ファイルに保存」を選べます。</div>
 
 <script>
 let records = JSON.parse(localStorage.getItem("odeLogRecords")) || [];
@@ -68,6 +72,7 @@ const perPage = 5;
 let autoLogging = false;
 let watchId = null;
 let lastAutoRecord = null;
+let autoSaving = false;
 const AUTO_MINUTES = 5;
 const AUTO_DISTANCE = 50;
 
@@ -98,6 +103,8 @@ async function getPlaceName(lat,lon){
         const res=await fetch(url);
         const data=await res.json();
         const a=data.address||{};
+        // 自宅エリア（西郷通）は住所の町名を優先して表示
+        if(a.city==="守口市" && (a.suburb==="西郷通" || a.city_district==="西郷通" || a.quarter==="西郷通")) return "西郷通";
         return a.city||a.town||a.village||a.municipality||a.county||"場所不明";
     }catch(e){return "地名取得失敗";}
 }
@@ -159,6 +166,39 @@ function displayData(data){
     coordinatesText.innerHTML="GPS："+Number(data.latitude).toFixed(6)+" / "+Number(data.longitude).toFixed(6);
 }
 
+
+function speak(text){
+    if(!voiceEnabled || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang="ja-JP";
+    u.rate=1.0;
+    u.pitch=1.0;
+    window.speechSynthesis.speak(u);
+}
+
+function toggleVoice(){
+    if(!("speechSynthesis" in window)){
+        status.innerHTML="❌ この端末では音声読み上げに対応していません";
+        return;
+    }
+    voiceEnabled=!voiceEnabled;
+    voiceBtn.innerHTML=voiceEnabled ? "🔊 音声：ON（停止する）" : "🔇 音声：OFF";
+    status.innerHTML=voiceEnabled ? "🔊 音声読み上げをONにしました" : "🔇 音声読み上げをOFFにしました";
+    if(voiceEnabled) speak("おでログの音声案内を開始しました");
+}
+
+function movementMessage(data){
+    const station = data.station || "";
+    if(station && station !== "取得できませんでした" && station !== "駅情報なし"){
+        return "近くの駅は" + station + "です。";
+    }
+    if(data.movement){
+        return data.movement + "。";
+    }
+    return "駅情報を取得できませんでした。";
+}
+
 async function recordPosition(position, reason){
     const lat=position.coords.latitude, lon=position.coords.longitude;
     status.innerHTML=reason+" 🌍 地名を調べています...";
@@ -193,8 +233,10 @@ async function getCurrentLocation(saveData){
             page=0;
             showRecords();
             status.innerHTML="✅ 現在地を記録しました";
+            speak("現在地を記録しました。" + movementMessage(data));
         }else{
             status.innerHTML="📍 現在地を表示しました";
+            speak("現在地を表示しました。" + movementMessage(data));
         }
     }catch(e){
         console.log(e);
@@ -202,17 +244,21 @@ async function getCurrentLocation(saveData){
     }
 }
 
-function handleAutoPosition(position){
-    if(!autoLogging)return;
+async function handleAutoPosition(position){
+    if(!autoLogging || autoSaving)return;
     const lat=position.coords.latitude, lon=position.coords.longitude;
     if(!lastAutoRecord){
-        recordPosition(position,"🤖 自動記録");
+        autoSaving=true;
+        try{ await recordPosition(position,"🤖 自動記録"); }
+        finally{ autoSaving=false; }
         return;
     }
     const distance=getDistance(lastAutoRecord.lat,lastAutoRecord.lon,lat,lon);
     const minutes=(Date.now()-lastAutoRecord.time)/60000;
     if(distance>=AUTO_DISTANCE || minutes>=AUTO_MINUTES){
-        recordPosition(position,"🤖 自動記録");
+        autoSaving=true;
+        try{ await recordPosition(position,"🤖 自動記録"); }
+        finally{ autoSaving=false; }
     }else{
         status.innerHTML="🤖 自動監視中（約"+Math.round(distance)+"m移動）";
     }
@@ -246,6 +292,7 @@ function stopAutoLogging(){
 document.getElementById("recordBtn").onclick=()=>getCurrentLocation(true);
 document.getElementById("locationBtn").onclick=()=>getCurrentLocation(false);
 autoBtn.onclick=()=>autoLogging?stopAutoLogging():startAutoLogging();
+voiceBtn.onclick=toggleVoice;
 
 function escapeHTML(text){
     if(text===undefined||text===null)return "";
@@ -283,7 +330,7 @@ function makeTXT(){
     const todayRecords=getTodayRecords();
     const now=new Date();
     const today=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-    let text="📍 おでログ Ver.3.0\n日付："+today+"\n================================\n\n";
+    let text="📍 おでログ Ver.4.0\n日付："+today+"\n================================\n\n";
     if(!todayRecords.length)return text+"本日の記録はありません。\n";
     todayRecords.slice().reverse().forEach((r,index)=>{
         text+="【"+(index+1)+"】\n日時："+r.time+"\n場所："+r.place+"\n駅："+r.station+
@@ -293,15 +340,46 @@ function makeTXT(){
     return text;
 }
 
-document.getElementById("txtBtn").onclick=()=>{
-    const now=new Date();
-    const filename=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0")+"_おでログ.txt";
-    const blob=new Blob([makeTXT()],{type:"text/plain;charset=utf-8"});
+function downloadTXT(date){
+    const dayRecords=records.filter(r=>r.date===date);
+    let text="📍 おでログ Ver.4.0\\n日付："+date+"\\n================================\\n\\n";
+    if(!dayRecords.length){
+        text+="この日の記録はありません。\\n";
+    }else{
+        dayRecords.slice().reverse().forEach((r,index)=>{
+            text+="【"+(index+1)+"】\\n";
+            text+="日時："+r.time+"\\n";
+            text+="場所："+r.place+"\\n";
+            text+="駅："+r.station+"\\n";
+            text+="緯度："+r.latitude+"\\n";
+            text+="経度："+r.longitude+"\\n";
+            text+="--------------------------------\\n\\n";
+        });
+    }
+    const filename=date+"_おでログ.txt";
+    const blob=new Blob([text],{type:"text/plain;charset=utf-8"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");
-    a.href=url;a.download=filename;document.body.appendChild(a);a.click();document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    status.innerHTML="💾 今日のTXTを作成しました";
+    a.href=url;a.download=filename;
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    status.innerHTML="💾 "+filename+" を作成しました";
+}
+
+document.getElementById("txtBtn").onclick=()=>{
+    const now=new Date();
+    const today=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
+    downloadTXT(today);
+};
+
+document.getElementById("allTxtBtn").onclick=()=>{
+    const dates=[...new Set(records.map(r=>r.date))].sort().reverse();
+    if(!dates.length){
+        status.innerHTML="📄 まだTXTにできる記録がありません";
+        return;
+    }
+    downloadTXT(dates[0]);
+    status.innerHTML="💾 "+dates[0]+" のTXTを作成しました";
 };
 
 showRecords();
