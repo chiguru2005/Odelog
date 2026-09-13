@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📍おでログ Ver.4.2</title>
+<title>📍おでログ Ver.4.3</title>
 <style>
 body{font-family:sans-serif;background:#f5f5f5;margin:0;padding:20px}
 h1{text-align:center;font-size:36px}
@@ -26,7 +26,7 @@ button{width:100%;font-size:22px;padding:16px;margin:8px 0;border:none;border-ra
 </head>
 <body>
 
-<h1>📍おでログ Ver.4.2</h1>
+<h1>📍おでログ Ver.4.3</h1>
 
 <button id="recordBtn">📍 現在地を記録</button>
 <button id="locationBtn">🏠 現在地を見る（保存しない）</button>
@@ -239,19 +239,26 @@ function movementMessage(data){
 
 async function recordPosition(position, reason){
     const lat=position.coords.latitude, lon=position.coords.longitude;
+    let place="地名取得失敗", station="駅情報取得失敗";
     status.innerHTML=reason+" 🌍 地名を調べています...";
-    const place=await getPlaceName(lat,lon);
+    try{ place=await getPlaceName(lat,lon); }catch(e){ console.log("地名取得エラー:",e); }
     status.innerHTML=reason+" 🚉 近くの駅を調べています...";
-    const station=await getNearestStation(lat,lon);
-    const data=makeData(position,place,station);
+    try{ station=await getNearestStation(lat,lon); }catch(e){ console.log("駅情報取得エラー:",e); }
 
+    const data=makeData(position,place,station);
     records.unshift(data);
     saveRecords();
     lastAutoRecord={lat,lon,time:Date.now()};
     page=0;
     displayData(data);
     showRecords();
-    status.innerHTML="✅ "+reason+"しました";
+
+    if(station==="駅情報取得失敗")
+        status.innerHTML="⚠️ 位置は記録しました（駅情報のみ取得できませんでした）";
+    else if(place==="地名取得失敗")
+        status.innerHTML="⚠️ 位置は記録しました（地名のみ取得できませんでした）";
+    else
+        status.innerHTML="✅ "+reason+"しました";
 }
 
 async function getCurrentLocation(saveData){
@@ -259,10 +266,13 @@ async function getCurrentLocation(saveData){
     try{
         const position=await getGPS();
         const lat=position.coords.latitude, lon=position.coords.longitude;
+        let place="地名取得失敗", station="駅情報取得失敗";
+
         status.innerHTML="🌍 地名を調べています...";
-        const place=await getPlaceName(lat,lon);
+        try{ place=await getPlaceName(lat,lon); }catch(e){ console.log("地名取得エラー:",e); }
         status.innerHTML="🚉 近くの駅を調べています...";
-        const station=await getNearestStation(lat,lon);
+        try{ station=await getNearestStation(lat,lon); }catch(e){ console.log("駅情報取得エラー:",e); }
+
         const data=makeData(position,place,station);
         displayData(data);
         if(saveData){
@@ -270,10 +280,18 @@ async function getCurrentLocation(saveData){
             saveRecords();
             page=0;
             showRecords();
-            status.innerHTML="✅ 現在地を記録しました";
+            status.innerHTML=station==="駅情報取得失敗"
+                ?"⚠️ 現在地を記録しました（駅情報のみ取得できませんでした）"
+                :place==="地名取得失敗"
+                ?"⚠️ 現在地を記録しました（地名のみ取得できませんでした）"
+                :"✅ 現在地を記録しました";
             speak("現在地を記録しました。" + movementMessage(data));
         }else{
-            status.innerHTML="📍 現在地を表示しました";
+            status.innerHTML=station==="駅情報取得失敗"
+                ?"📍 現在地を表示しました（駅情報のみ取得できませんでした）"
+                :place==="地名取得失敗"
+                ?"📍 現在地を表示しました（地名のみ取得できませんでした）"
+                :"📍 現在地を表示しました";
             speak("現在地を表示しました。" + movementMessage(data));
         }
     }catch(e){
@@ -370,7 +388,7 @@ function makeTXT(){
     const todayRecords=getTodayRecords();
     const now=new Date();
     const today=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-    let text="📍 おでログ Ver.4.2\n日付："+today+"\n================================\n\n";
+    let text="📍 おでログ Ver.4.3\n日付："+today+"\n================================\n\n";
     if(!todayRecords.length)return text+"本日の記録はありません。\n";
     todayRecords.slice().reverse().forEach((r,index)=>{
         text+="【"+(index+1)+"】\n日時："+r.time+"\n場所："+r.place+"\n駅："+r.station+
@@ -382,7 +400,7 @@ function makeTXT(){
 
 function downloadTXT(date){
     const dayRecords=records.filter(r=>r.date===date);
-    let text="📍 おでログ Ver.4.2\\n日付："+date+"\\n================================\\n\\n";
+    let text="📍 おでログ Ver.4.3\\n日付："+date+"\\n================================\\n\\n";
     if(!dayRecords.length){
         text+="この日の記録はありません。\\n";
     }else{
