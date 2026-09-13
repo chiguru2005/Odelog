@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📍おでログ Ver.4.1</title>
+<title>📍おでログ Ver.4.2</title>
 <style>
 body{font-family:sans-serif;background:#f5f5f5;margin:0;padding:20px}
 h1{text-align:center;font-size:36px}
@@ -26,7 +26,7 @@ button{width:100%;font-size:22px;padding:16px;margin:8px 0;border:none;border-ra
 </head>
 <body>
 
-<h1>📍おでログ Ver.4.1</h1>
+<h1>📍おでログ Ver.4.2</h1>
 
 <button id="recordBtn">📍 現在地を記録</button>
 <button id="locationBtn">🏠 現在地を見る（保存しない）</button>
@@ -134,14 +134,52 @@ out center tags;`;
     }catch(e){return "駅情報取得失敗";}
 }
 
+function getGPSErrorMessage(error){
+    if(!error) return "❌ 位置情報の取得に失敗しました";
+    switch(error.code){
+        case 1:
+            return "🔒 位置情報の利用が許可されていません";
+        case 2:
+            return "📡 現在地を取得できませんでした（GPS・Wi-Fi情報を確認してください）";
+        case 3:
+            return "⏱️ GPSの取得がタイムアウトしました";
+        default:
+            return "❌ 位置情報の取得に失敗しました";
+    }
+}
+
 function getGPS(){
     return new Promise((resolve,reject)=>{
         if(!navigator.geolocation){
             reject(new Error("この端末はGPSに対応していません")); return;
         }
-        navigator.geolocation.getCurrentPosition(resolve,reject,{
-            enableHighAccuracy:true, timeout:20000, maximumAge:0
-        });
+
+        // まず高精度GPSで取得。iPhone/iPadでは屋内などで時間がかかるため、
+        // タイムアウトした場合はWi-Fi等を使う通常精度へ自動的に切り替える。
+        navigator.geolocation.getCurrentPosition(
+            resolve,
+            (error)=>{
+                if(error && error.code===3){
+                    status.innerHTML="⏱️ 高精度GPSが時間内に取得できませんでした。通常精度で再試行中...";
+                    navigator.geolocation.getCurrentPosition(
+                        resolve,
+                        reject,
+                        {
+                            enableHighAccuracy:false,
+                            timeout:60000,
+                            maximumAge:30000
+                        }
+                    );
+                }else{
+                    reject(error);
+                }
+            },
+            {
+                enableHighAccuracy:true,
+                timeout:30000,
+                maximumAge:0
+            }
+        );
     });
 }
 
@@ -240,7 +278,7 @@ async function getCurrentLocation(saveData){
         }
     }catch(e){
         console.log(e);
-        status.innerHTML="❌ GPS・位置情報の取得に失敗しました";
+        status.innerHTML=getGPSErrorMessage(e);
     }
 }
 
@@ -274,7 +312,7 @@ function startAutoLogging(){
     autoState.innerHTML="ON：ページを開いている間、自動記録を監視中";
     status.innerHTML="🤖 自動記録を開始しました";
     watchId=navigator.geolocation.watchPosition(handleAutoPosition,
-        ()=>{status.innerHTML="❌ 自動記録のGPS取得に失敗しました";},
+        (e)=>{status.innerHTML="🤖 "+getGPSErrorMessage(e);},
         {enableHighAccuracy:true,timeout:30000,maximumAge:60000});
 }
 
@@ -332,7 +370,7 @@ function makeTXT(){
     const todayRecords=getTodayRecords();
     const now=new Date();
     const today=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-    let text="📍 おでログ Ver.4.1\n日付："+today+"\n================================\n\n";
+    let text="📍 おでログ Ver.4.2\n日付："+today+"\n================================\n\n";
     if(!todayRecords.length)return text+"本日の記録はありません。\n";
     todayRecords.slice().reverse().forEach((r,index)=>{
         text+="【"+(index+1)+"】\n日時："+r.time+"\n場所："+r.place+"\n駅："+r.station+
@@ -344,7 +382,7 @@ function makeTXT(){
 
 function downloadTXT(date){
     const dayRecords=records.filter(r=>r.date===date);
-    let text="📍 おでログ Ver.4.1\\n日付："+date+"\\n================================\\n\\n";
+    let text="📍 おでログ Ver.4.2\\n日付："+date+"\\n================================\\n\\n";
     if(!dayRecords.length){
         text+="この日の記録はありません。\\n";
     }else{
