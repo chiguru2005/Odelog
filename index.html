@@ -22,6 +22,7 @@ button{width:100%;font-size:22px;padding:16px;margin:8px 0;border:none;border-ra
 .pageButtons button{font-size:20px}
 .small{color:#666;font-size:15px}
 .note{font-size:15px;color:#666;line-height:1.6}
+.transport{font-size:19px;margin:6px 0}.homeInfo{font-size:18px;font-weight:bold;margin:6px 0}
 </style>
 </head>
 <body>
@@ -73,7 +74,6 @@ let autoLogging = false;
 let watchId = null;
 let lastAutoRecord = null;
 let autoSaving = false;
-
 const AUTO_MINUTES = 5;
 const AUTO_DISTANCE = 50;
 
@@ -111,50 +111,61 @@ async function getPlaceName(lat,lon){
 }
 
 async function getNearestTransport(lat,lon){
+    const result={station:"駅情報なし",busStop:"バス停情報なし",stationDistance:Infinity,busStopDistance:Infinity};
     try{
         const query=`[out:json][timeout:15];
 (
- node["railway"="station"](around:2000,${lat},${lon});
- way["railway"="station"](around:2000,${lat},${lon});
- node["highway"="bus_stop"](around:1000,${lat},${lon});
- way["highway"="bus_stop"](around:1000,${lat},${lon});
+ node["railway"="station"](around:2500,${lat},${lon});
+ way["railway"="station"](around:2500,${lat},${lon});
+ node["highway"="bus_stop"](around:2000,${lat},${lon});
+ way["highway"="bus_stop"](around:2000,${lat},${lon});
+ node["public_transport"="platform"]["bus"](around:2000,${lat},${lon});
+ way["public_transport"="platform"]["bus"](around:2000,${lat},${lon});
 );
 out center tags;`;
         const response=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:query});
         const data=await response.json();
-        if(!data.elements||!data.elements.length)return {type:"none",text:"交通情報なし"};
-        let nearest=null;
+        if(!data.elements) return result;
         data.elements.forEach(el=>{
-            const xlat=el.lat??el.center?.lat, xlon=el.lon??el.center?.lon;
-            if(xlat===undefined||xlon===undefined)return;
-            const d=getDistance(lat,lon,xlat,xlon);
-            const isBus=el.tags?.highway==="bus_stop";
-            const name=el.tags?.name||el.tags?.ref||"名称不明";
-            if(!nearest||d<nearest.distance) nearest={type:isBus?"bus":"station",name,distance:d};
+            const slat=el.lat!==undefined?el.lat:(el.center?el.center.lat:undefined);
+            const slon=el.lon!==undefined?el.lon:(el.center?el.center.lon:undefined);
+            if(slat===undefined||slon===undefined)return;
+            const tags=el.tags||{};
+            const name=tags.name||tags["name:ja"]||"名称不明";
+            const d=getDistance(lat,lon,slat,slon);
+            const isStation=tags.railway==="station";
+            const isBus=tags.highway==="bus_stop" || tags.public_transport==="platform" && tags.bus!==undefined;
+            if(isStation && d<result.stationDistance){
+                result.stationDistance=d;
+                result.station=name+"（約"+Math.round(d)+"m）";
+            }
+            if(isBus && d<result.busStopDistance){
+                result.busStopDistance=d;
+                result.busStop=name+"（約"+Math.round(d)+"m）";
+            }
         });
-        if(!nearest)return {type:"none",text:"交通情報なし"};
-        return {type:nearest.type,text:(nearest.type==="bus"?"🚌 最寄りバス停：":"🚉 最寄り駅：")+nearest.name+"（約"+Math.round(nearest.distance)+"m）"};
-    }catch(e){return {type:"error",text:"交通情報取得失敗"};}
+    }catch(e){
+        console.log("交通情報取得エラー:",e);
+        result.station="駅情報取得失敗";
+        result.busStop="バス停情報取得失敗";
+    }
+    return result;
 }
 
-// 自宅基準点：西郷通2-9-15付近。住所そのものは外部へ送らず、距離計算の基準として使用。
-const HOME_LAT=34.730684;
-const HOME_LON=135.572511;
-function getHomeDistance(lat,lon){
-    return getDistance(lat,lon,HOME_LAT,HOME_LON);
-}
-function formatDistance(m){
-    return m<1000 ? "約"+Math.round(m)+"m" : "約"+(m/1000).toFixed(1)+"km";
-}
-function formatHomeMinutes(m){
-    // 車いすでの移動目安：分速約60m（約3.6km/h）
-    return "約"+Math.max(0,Math.round(m/60))+"分";
+function getGPSErrorMessage(error){
+    if(!error) return "❌ 位置情報の取得に失敗しました";
+    switch(error.code){
+        case 1:
+            return "🔒 位置情報の利用が許可されていません";
+        case 2:
+            return "📡 現在地を取得できませんでした（GPS・Wi-Fi情報を確認してください）";
+        case 3:
+            return "⏱️ GPSの取得がタイムアウトしました";
+        default:
+            return "❌ 位置情報の取得に失敗しました";
+    }
 }
 
-async function getNearestStation(lat,lon){
-    const t=await getNearestTransport(lat,lon);
-    return t.text;
-}
 function getGPS(){
     return new Promise((resolve,reject)=>{
         if(!navigator.geolocation){
@@ -190,29 +201,33 @@ function getGPS(){
     });
 }
 
+const HOME_LAT=34.730684;
+const HOME_LON=135.572511;
+function homeDistance(lat,lon){return getDistance(HOME_LAT,HOME_LON,lat,lon);}
+function formatDistance(m){
+    if(m<1000)return "約"+Math.round(m)+"m";
+    return "約"+(m/1000).toFixed(2)+"km";
+}
+function formatMinutes(m){return "約"+Math.max(1,Math.round(m/70))+"分";}
+
 function makeData(position,place,transport){
     const now=new Date();
     const time=now.toLocaleString("ja-JP",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
     const date=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
     const lat=position.coords.latitude, lon=position.coords.longitude;
-    const hd=getHomeDistance(lat,lon);
-    return {
-        place,time,date,
-        station:transport?.text||"交通情報なし",
-        busStop:transport?.type==="bus" ? transport.text : "バス停情報なし",
-        homeDistance:hd,
-        homeMinutes:formatHomeMinutes(hd),
-        latitude:lat, longitude:lon
-    };
+    const hd=homeDistance(lat,lon);
+    return {place:place,station:transport.station,busStop:transport.busStop,time:time,date:date,
+        latitude:lat,longitude:lon,homeDistance:hd,homeMinutes:Math.max(1,Math.round(hd/70)),
+        stationDistance:transport.stationDistance,busStopDistance:transport.busStopDistance};
 }
 
 function displayData(data){
-    placeText.innerHTML="場所："+escapeHTML(data.place);
-    stationText.innerHTML=escapeHTML(data.station);
+    placeText.innerHTML="🏠 自宅";
+    stationText.innerHTML="🚉 最寄り駅："+escapeHTML(data.station||"駅情報なし")+"<br>🚌 最寄りバス停："+escapeHTML(data.busStop||"バス停情報なし");
     timeText.innerHTML="時間："+escapeHTML(data.time);
-    coordinatesText.innerHTML="🗺️ 地図上の位置："+Number(data.latitude).toFixed(6)+" / "+Number(data.longitude).toFixed(6)+"<br>🏠 自宅から："+formatDistance(data.homeDistance)+"（"+escapeHTML(data.homeMinutes)+"）<br>"+escapeHTML(data.busStop);
+    coordinatesText.innerHTML="🗺️ 地図上の位置："+Number(data.latitude).toFixed(6)+" / "+Number(data.longitude).toFixed(6)+
+      "<br>🏠 自宅から："+formatDistance(data.homeDistance)+"　⏱️ 徒歩"+formatMinutes(data.homeMinutes*70);
 }
-
 
 function speak(text){
     if(!voiceEnabled || !("speechSynthesis" in window)) return;
@@ -236,29 +251,28 @@ function toggleVoice(){
 }
 
 function movementMessage(data){
-    const station=data.station||"";
-    if(station && !station.includes("取得失敗") && !station.includes("交通情報なし")) return station.replace(/^.*?：/,"")+"です。";
-    if(data.movement) return data.movement+"。";
+    const sd=Number(data.stationDistance), bd=Number(data.busStopDistance);
+    if(data.station && data.busStop && isFinite(sd) && isFinite(bd)){
+        if(bd<sd)return "最寄りの交通機関はバス停、"+data.busStop+"です。";
+        return "最寄りの交通機関は駅、"+data.station+"です。";
+    }
+    if(data.busStop && data.busStop!=="バス停情報なし" && data.busStop!=="バス停情報取得失敗") return "最寄りのバス停は"+data.busStop+"です。";
+    if(data.station && data.station!=="駅情報なし" && data.station!=="駅情報取得失敗") return "最寄りの駅は"+data.station+"です。";
     return "交通情報を取得できませんでした。";
 }
 
 async function recordPosition(position, reason){
     const lat=position.coords.latitude, lon=position.coords.longitude;
-    let place="地名取得失敗", transport={type:"none",text:"交通情報なし"};
+    let place="地名取得失敗", transport={station:"駅情報取得失敗",busStop:"バス停情報取得失敗",stationDistance:Infinity,busStopDistance:Infinity};
     status.innerHTML=reason+" 🌍 地名を調べています...";
-    try{ place=await getPlaceName(lat,lon); }catch(e){ console.log("地名取得エラー:",e); }
-    status.innerHTML=reason+" 🚉🚌 近くの駅・バス停を調べています...";
-    try{ transport=await getNearestTransport(lat,lon); }catch(e){ console.log("交通情報取得エラー:",e); }
-
+    try{place=await getPlaceName(lat,lon);}catch(e){}
+    status.innerHTML=reason+" 🚉 最寄り駅・バス停を取得中...";
+    try{transport=await getNearestTransport(lat,lon);}catch(e){}
     const data=makeData(position,place,transport);
-    records.unshift(data);
-    saveRecords();
-    lastAutoRecord={lat,lon,time:Date.now()};
-    page=0;
-    displayData(data);
-    showRecords();
-    placeText.innerHTML="🏠 自宅";
+    records.unshift(data); saveRecords(); lastAutoRecord={lat:lat,lon:lon,time:Date.now()}; page=0;
+    displayData(data); showRecords();
     status.innerHTML="✅ "+reason+"しました";
+    speak(reason+"しました。"+movementMessage(data));
 }
 
 async function getCurrentLocation(saveData){
@@ -266,30 +280,22 @@ async function getCurrentLocation(saveData){
     try{
         const position=await getGPS();
         const lat=position.coords.latitude, lon=position.coords.longitude;
-        let place="地名取得失敗", transport={type:"none",text:"交通情報なし"};
-
+        let place="地名取得失敗", transport={station:"駅情報取得失敗",busStop:"バス停情報取得失敗",stationDistance:Infinity,busStopDistance:Infinity};
         status.innerHTML="🌍 地名を調べています...";
-        try{ place=await getPlaceName(lat,lon); }catch(e){ console.log("地名取得エラー:",e); }
-        status.innerHTML="🚉🚌 近くの駅・バス停を調べています...";
-        try{ transport=await getNearestTransport(lat,lon); }catch(e){ console.log("交通情報取得エラー:",e); }
-
+        try{place=await getPlaceName(lat,lon);}catch(e){}
+        status.innerHTML="🚉 最寄り駅・バス停取得中...";
+        try{transport=await getNearestTransport(lat,lon);}catch(e){}
         const data=makeData(position,place,transport);
         displayData(data);
         if(saveData){
-            records.unshift(data);
-            saveRecords();
-            page=0;
-            showRecords();
-            status.innerHTML="✅ 現在地を記録しました";
-            speak("現在地を記録しました。" + movementMessage(data));
+            records.unshift(data); saveRecords(); page=0; showRecords();
+            status.innerHTML="📍 現在地を記録しました";
+            speak("現在地を記録しました。"+movementMessage(data));
         }else{
             status.innerHTML="📍 現在地を表示しました";
-            speak("現在地を表示しました。" + movementMessage(data));
+            speak("現在地を表示しました。"+movementMessage(data));
         }
-    }catch(e){
-        console.log(e);
-        
-    }
+    }catch(e){console.log(e);}
 }
 
 async function handleAutoPosition(position){
@@ -352,11 +358,13 @@ function showRecords(){
     const show=records.slice(page*perPage,page*perPage+perPage);
     if(!show.length){list.innerHTML="まだ記録はありません";return;}
     show.forEach(r=>{
-        const div=document.createElement("div");
-        div.className="record";
+        const div=document.createElement("div"); div.className="record";
+        const hd=Number(r.homeDistance);
         div.innerHTML="<div class='recordDate'>📅 "+escapeHTML(r.date)+"</div>"+
-          "<div class='recordPlace'>📍 "+escapeHTML(r.place)+"</div>"+
-          "<div class='station'>🚉 "+escapeHTML(r.station)+"</div>"+
+          "<div class='recordPlace'>🏠 自宅</div>"+
+          "<div class='homeInfo'>🏠 自宅から："+(isFinite(hd)?formatDistance(hd):"不明")+"　⏱️ 徒歩"+(isFinite(hd)?formatMinutes(hd):"不明")+"</div>"+
+          "<div class='station'>🚉 "+escapeHTML(r.station||"駅情報なし")+"</div>"+
+          "<div class='transport'>🚌 "+escapeHTML(r.busStop||"バス停情報なし")+"</div>"+
           "<div class='recordTime'>🕒 "+escapeHTML(r.time)+"</div>"+
           "<div class='recordMap'>🗺️ 地図上の位置："+Number(r.latitude).toFixed(6)+" / "+Number(r.longitude).toFixed(6)+"</div>";
         list.appendChild(div);
@@ -380,34 +388,36 @@ function makeTXT(){
     const todayRecords=getTodayRecords();
     const now=new Date();
     const today=now.getFullYear()+"-"+String(now.getMonth()+1).padStart(2,"0")+"-"+String(now.getDate()).padStart(2,"0");
-    let text="📍 おでログ Ver.4.6\n日付："+today+"\n==============================\n\n";
+    let text="📍 おでログ Ver.4.6\n日付："+today+"\n================================\n\n";
     if(!todayRecords.length)return text+"本日の記録はありません。\n";
     todayRecords.slice().reverse().forEach((r,index)=>{
-        text+="【"+(index+1)+"】 "+r.time.split(" ").pop()+"\n";
-        text+="📍 場所："+(r.place||"場所不明")+"\n";
-        text+=(r.station||"交通情報なし")+"\n";
-        text+="🏠 自宅から："+formatDistance(r.homeDistance||0)+" / "+(r.homeMinutes||"約0分")+"\n";
-        text+="🗺️ 位置："+Number(r.latitude).toFixed(6)+", "+Number(r.longitude).toFixed(6)+"\n\n";
+        const hd=Number(r.homeDistance);
+        text+="【"+(index+1)+"】\n日時："+r.time+"\n場所：🏠 自宅\n";
+        text+="自宅から："+(isFinite(hd)?formatDistance(hd):"不明")+"\n";
+        text+="徒歩：約"+(isFinite(hd)?Math.max(1,Math.round(hd/70)):"不明")+"分\n";
+        text+="最寄り駅："+(r.station||"駅情報なし")+"\n最寄りバス停："+(r.busStop||"バス停情報なし")+"\n";
+        text+="🗺️ 地図上の位置\n緯度："+r.latitude+"\n経度："+r.longitude+"\n--------------------------------\n\n";
     });
     return text;
 }
 
 function downloadTXT(date){
     const dayRecords=records.filter(r=>r.date===date);
-    let text="📍 おでログ Ver.4.6\n日付："+date+"\n==============================\n\n";
-    if(!dayRecords.length){ text+="この日の記録はありません。\n"; }
+    let text="📍 おでログ Ver.4.6\n日付："+date+"\n================================\n\n";
+    if(!dayRecords.length)text+="この日の記録はありません。\n";
     else dayRecords.slice().reverse().forEach((r,index)=>{
-        text+="【"+(index+1)+"】 "+r.time.split(" ").pop()+"\n";
-        text+="📍 場所："+(r.place||"場所不明")+"\n";
-        text+=(r.station||"交通情報なし")+"\n";
-        text+="🏠 自宅から："+formatDistance(r.homeDistance||0)+" / "+(r.homeMinutes||"約0分")+"\n";
-        text+="🗺️ 位置："+Number(r.latitude).toFixed(6)+", "+Number(r.longitude).toFixed(6)+"\n\n";
+        const hd=Number(r.homeDistance);
+        text+="【"+(index+1)+"】\n日時："+r.time+"\n場所：🏠 自宅\n";
+        text+="自宅から："+(isFinite(hd)?formatDistance(hd):"不明")+"\n";
+        text+="徒歩：約"+(isFinite(hd)?Math.max(1,Math.round(hd/70)):"不明")+"分\n";
+        text+="最寄り駅："+(r.station||"駅情報なし")+"\n最寄りバス停："+(r.busStop||"バス停情報なし")+"\n";
+        text+="🗺️ 地図上の位置\n緯度："+r.latitude+"\n経度："+r.longitude+"\n--------------------------------\n\n";
     });
     const filename=date+"_おでログ.txt";
     const blob=new Blob([text],{type:"text/plain;charset=utf-8"});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a"); a.href=url; a.download=filename; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    status.innerHTML="💾 "+filename+" を作成しました";
 }
 
 document.getElementById("txtBtn").onclick=()=>{
